@@ -21,7 +21,7 @@ pub mod session {
         query::*,
         response::*,
         sample::*,
-        session::{Session, SessionBuilder, StaticSessionBuilder},
+        session::{Session, SessionBuilder, SessionGuard, SessionSlot, StaticSessionBuilder},
         session::{get::*, r#pub::*, put::*, querier::*, queryable::*, sub::*},
     };
 

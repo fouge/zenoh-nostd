@@ -236,3 +236,229 @@ macro_rules! __session {
         }
     }};
 }
+
+/// Reusable, pinned storage for a session backed by a static configuration.
+/// A guard bounds access to each session; dropping it releases the driver before
+/// its transport, including on cancellation. No allocation is required.
+pub struct SessionSlot<Config: ZSessionConfig + 'static> {
+    session: core::mem::MaybeUninit<Session<'static, Config>>,
+    transport: core::mem::MaybeUninit<
+        TransportLink<<Config::LinkManager as ZLinkManager>::Link<'static>, Config::Buff>,
+    >,
+    occupied: bool,
+    _pin: core::marker::PhantomPinned,
+}
+impl<Config: ZSessionConfig + 'static> Default for SessionSlot<Config> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl<Config: ZSessionConfig + 'static> SessionSlot<Config> {
+    pub const fn new() -> Self {
+        Self {
+            session: core::mem::MaybeUninit::uninit(),
+            transport: core::mem::MaybeUninit::uninit(),
+            occupied: false,
+            _pin: core::marker::PhantomPinned,
+        }
+    }
+    pub fn insert(
+        self: core::pin::Pin<&mut Self>,
+        transport: TransportLink<
+            <Config::LinkManager as ZLinkManager>::Link<'static>,
+            Config::Buff,
+        >,
+    ) -> SessionGuard<'_, Config> {
+        // SAFETY: the slot is pinned before constructing the self-reference.
+        // References returned by the guard borrow the guard, never the internal
+        // static lifetime. No driver or transport can escape or be moved while
+        // initialized. Config-owned link resources must themselves be static.
+        unsafe {
+            let slot = self.get_unchecked_mut();
+            slot.clear();
+            slot.transport.write(transport);
+            let transport: &'static mut TransportLink<_, _> = &mut *slot.transport.as_mut_ptr();
+            slot.session.write(Session::new(transport));
+            slot.occupied = true;
+            SessionGuard {
+                slot: core::pin::Pin::new_unchecked(slot),
+            }
+        }
+    }
+    fn clear(&mut self) {
+        if self.occupied {
+            self.occupied = false;
+            // SAFETY: both fields are initialized together. The driver is
+            // destroyed before the borrowed transport. Pinning also protects
+            // this order if a caller forgets a guard and later drops the slot.
+            unsafe {
+                self.session.assume_init_drop();
+                self.transport.assume_init_drop();
+            }
+        }
+    }
+}
+impl<Config: ZSessionConfig + 'static> Drop for SessionSlot<Config> {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+pub struct SessionGuard<'slot, Config: ZSessionConfig + 'static> {
+    slot: core::pin::Pin<&'slot mut SessionSlot<Config>>,
+}
+impl<Config: ZSessionConfig + 'static> SessionGuard<'_, Config> {
+    pub fn session(&self) -> &Session<'static, Config> {
+        // SAFETY: insert initialized the session and the guard excludes clear.
+        unsafe { self.slot.session.assume_init_ref() }
+    }
+}
+impl<Config: ZSessionConfig + 'static> Drop for SessionGuard<'_, Config> {
+    fn drop(&mut self) {
+        // SAFETY: destruction does not move either pinned field.
+        unsafe {
+            self.slot.as_mut().get_unchecked_mut().clear();
+        }
+    }
+}
+
+#[cfg(test)]
+mod slot_tests {
+    extern crate std;
+    use super::*;
+    use crate::session::TransportLinkManager;
+    use crate::{
+        platform::*,
+        session::{
+            FixedCapacityGetCallbacks, FixedCapacityQueryableCallbacks, FixedCapacitySubCallbacks,
+        },
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    struct Counts {
+        halves: AtomicUsize,
+        links: AtomicUsize,
+    }
+    struct Link(Arc<Counts>);
+    struct Half(Arc<Counts>);
+    impl Drop for Link {
+        fn drop(&mut self) {
+            self.0.links.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    impl Drop for Half {
+        fn drop(&mut self) {
+            assert_eq!(self.0.links.load(Ordering::SeqCst), 0);
+            self.0.halves.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    impl ZLinkInfo for Link {
+        fn mtu(&self) -> u16 {
+            64
+        }
+        fn is_streamed(&self) -> bool {
+            true
+        }
+    }
+    impl ZLinkInfo for Half {
+        fn mtu(&self) -> u16 {
+            64
+        }
+        fn is_streamed(&self) -> bool {
+            true
+        }
+    }
+    impl ZLinkTx for Half {
+        async fn write_all(&mut self, _: &[u8]) -> Result<(), LinkError> {
+            Ok(())
+        }
+    }
+    impl ZLinkRx for Half {
+        async fn read(&mut self, _: &mut [u8]) -> Result<usize, LinkError> {
+            core::future::pending().await
+        }
+        async fn read_exact(&mut self, _: &mut [u8]) -> Result<(), LinkError> {
+            core::future::pending().await
+        }
+    }
+    impl ZLinkTx for Link {
+        async fn write_all(&mut self, _: &[u8]) -> Result<(), LinkError> {
+            Ok(())
+        }
+    }
+    impl ZLinkRx for Link {
+        async fn read(&mut self, _: &mut [u8]) -> Result<usize, LinkError> {
+            core::future::pending().await
+        }
+        async fn read_exact(&mut self, _: &mut [u8]) -> Result<(), LinkError> {
+            core::future::pending().await
+        }
+    }
+    impl ZLink for Link {
+        type Tx<'a> = Half;
+        type Rx<'a> = Half;
+        fn split(&mut self) -> (Half, Half) {
+            (Half(self.0.clone()), Half(self.0.clone()))
+        }
+    }
+    struct Manager;
+    impl ZLinkManager for Manager {
+        type Link<'a> = Link;
+        async fn connect(&self, _: Endpoint<'_>) -> Result<Link, LinkError> {
+            Err(LinkError::CouldNotConnect)
+        }
+        async fn listen(&self, _: Endpoint<'_>) -> Result<Link, LinkError> {
+            Err(LinkError::CouldNotListen)
+        }
+    }
+    struct Config;
+    impl ZSessionConfig for Config {
+        type Buff = [u8; 64];
+        type LinkManager = Manager;
+        type SubCallbacks<'a> = FixedCapacitySubCallbacks<'a, 2>;
+        type GetCallbacks<'a> = FixedCapacityGetCallbacks<'a, 2>;
+        type QueryableCallbacks<'a> = FixedCapacityQueryableCallbacks<'a, Self, 2>;
+        fn transports(&self) -> &TransportLinkManager<Manager> {
+            unreachable!()
+        }
+        fn buff(&self) -> Self::Buff {
+            [0; 64]
+        }
+    }
+    fn transport(counts: Arc<Counts>) -> TransportLink<Link, [u8; 64]> {
+        TransportLink::new(
+            Link(counts),
+            zenoh_sansio::Transport::builder([0; 64]).codec(),
+        )
+    }
+    #[test]
+    fn slot_releases_driver_before_link_on_every_reuse() {
+        let mut slot = core::pin::pin!(SessionSlot::<Config>::new());
+        for _ in 0..1000 {
+            let counts = Arc::new(Counts {
+                halves: AtomicUsize::new(0),
+                links: AtomicUsize::new(0),
+            });
+            let guard = slot.as_mut().insert(transport(counts.clone()));
+            let _session = guard.session();
+            drop(guard);
+            assert_eq!(counts.halves.load(Ordering::SeqCst), 2);
+            assert_eq!(counts.links.load(Ordering::SeqCst), 1);
+        }
+    }
+    #[test]
+    fn forgotten_guard_is_reclaimed_when_the_pinned_slot_drops() {
+        let counts = Arc::new(Counts {
+            halves: AtomicUsize::new(0),
+            links: AtomicUsize::new(0),
+        });
+        {
+            let mut slot = core::pin::pin!(SessionSlot::<Config>::new());
+            let guard = slot.as_mut().insert(transport(counts.clone()));
+            core::mem::forget(guard);
+        }
+        assert_eq!(counts.halves.load(Ordering::SeqCst), 2);
+        assert_eq!(counts.links.load(Ordering::SeqCst), 1);
+    }
+}
