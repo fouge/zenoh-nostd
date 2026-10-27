@@ -57,8 +57,7 @@ impl<'a, 'res, Config, OwnedQuery, const CHANNEL: bool>
 where
     Config: ZSessionConfig,
 {
-    #[allow(dead_code)]
-    async fn undeclare(self) -> core::result::Result<(), SessionError> {
+    pub async fn undeclare(self) -> core::result::Result<(), SessionError> {
         let msg = Declare {
             body: DeclareBody::UndeclareQueryable(UndeclareQueryable {
                 id: self.id,
@@ -84,7 +83,7 @@ where
             }))
             .await?;
 
-        todo!("Also stop the channel if any")
+        Ok(())
     }
 }
 
@@ -247,7 +246,8 @@ where
             ..Default::default()
         };
 
-        self.session
+        let result = self
+            .session
             .driver
             .tx()
             .await
@@ -256,7 +256,11 @@ where
                 qos: QoS::default(),
                 body: NetworkBody::Declare(msg),
             }))
-            .await?;
+            .await;
+        if let Err(error) = result {
+            state.queryable_callbacks.remove(id)?;
+            return Err(error.into());
+        }
 
         Ok(Queryable {
             id,
@@ -279,7 +283,7 @@ impl<'res, Config> Session<'res, Config>
 where
     Config: ZSessionConfig,
 {
-    pub(crate) async fn reply(
+    pub async fn reply(
         &self,
         rid: u32,
         ke: &keyexpr,
@@ -308,7 +312,7 @@ where
             .await?)
     }
 
-    pub(crate) async fn err(
+    pub async fn err(
         &self,
         rid: u32,
         ke: &keyexpr,
@@ -334,7 +338,7 @@ where
             .await?)
     }
 
-    pub(crate) async fn finalize(&self, rid: u32) -> core::result::Result<(), SessionError> {
+    pub async fn finalize(&self, rid: u32) -> core::result::Result<(), SessionError> {
         if self.state().await.queryable_callbacks.decrease(rid) {
             self.driver
                 .tx()
