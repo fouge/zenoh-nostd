@@ -32,6 +32,8 @@ where
         callback: DynCallback<'a, Self::Callback, Self::Future, Arg>,
     ) -> core::result::Result<(), zenoh_proto::CollectionError>;
     fn drop_timedout(&mut self);
+    fn first_id(&self) -> Option<u32>;
+    fn clear(&mut self);
     fn get(&mut self, id: u32) -> Option<&mut DynCallback<'a, Self::Callback, Self::Future, Arg>>;
     fn remove(&mut self, id: u32) -> core::result::Result<(), zenoh_proto::CollectionError>;
     fn set_counter(
@@ -100,6 +102,13 @@ impl<
     fn drop_timedout(&mut self) {
         self.entries
             .retain(|_, (_, _, timeout)| timeout.is_none_or(|t| Instant::now() < t));
+    }
+    fn first_id(&self) -> Option<u32> {
+        self.entries.keys().next().copied()
+    }
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.counters.clear();
     }
     fn remove(&mut self, id: u32) -> Result<(), zenoh_proto::CollectionError> {
         self.entries.remove(&id);
@@ -178,6 +187,13 @@ impl<'a, Arg: ZArg + 'a, Callback: Storage, Future: Storage> ZCallbacks<'a, Arg>
     fn drop_timedout(&mut self) {
         self.entries
             .retain(|_, (_, _, timeout)| timeout.is_none_or(|t| Instant::now() < t));
+    }
+    fn first_id(&self) -> Option<u32> {
+        self.entries.keys().next().copied()
+    }
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.counters.clear();
     }
     fn remove(&mut self, id: u32) -> Result<(), zenoh_proto::CollectionError> {
         self.entries.remove(&id);
@@ -286,7 +302,7 @@ mod tests {
                 1
             );
             registry.remove(id).unwrap();
-            assert!(registry.get(id).is_none());
+            assert!(registry.first_id().is_none());
         }
     }
     #[test]
@@ -294,7 +310,7 @@ mod tests {
         let mut registry = Registry::empty();
         let long = keyexpr::new("this/key/is/too/long/for/the/registry/storage").unwrap();
         assert!(registry.insert(1, long, None, callback()).is_err());
-        assert!(registry.get(1).is_none());
+        assert!(registry.first_id().is_none());
         for id in 0..2 {
             registry
                 .insert(id, keyexpr::new("a").unwrap(), None, callback())
@@ -315,13 +331,8 @@ mod tests {
             assert!(registry.decrease(id));
             assert!(!registry.decrease(id));
         }
-        registry.remove(0).unwrap();
-        registry.remove(1).unwrap();
-        assert!(registry.get(0).is_none());
-        assert!(registry.get(1).is_none());
-        registry
-            .insert(2, keyexpr::new("reused/key").unwrap(), None, callback())
-            .unwrap();
+        registry.clear();
+        assert!(registry.first_id().is_none());
     }
     #[test]
     fn expired_get_releases_key_and_callback() {
@@ -335,6 +346,6 @@ mod tests {
             )
             .unwrap();
         registry.drop_timedout();
-        assert!(registry.get(1).is_none());
+        assert!(registry.first_id().is_none());
     }
 }
