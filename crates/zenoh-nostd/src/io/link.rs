@@ -10,6 +10,13 @@ pub trait ZLinkTx: ZLinkInfo {
         &mut self,
         buffer: &[u8],
     ) -> impl Future<Output = core::result::Result<(), zenoh_proto::LinkError>>;
+
+    /// Finish any buffered transmission before the link is dropped. Links whose
+    /// writes already hand data to an independently owned transport may keep
+    /// the default; adapters with application-owned TX buffers must override it.
+    fn flush(&mut self) -> impl Future<Output = Result<(), LinkError>> {
+        async { Ok(()) }
+    }
 }
 
 pub trait ZLinkRx: ZLinkInfo {
@@ -118,6 +125,10 @@ impl<Rx: embedded_io_async::Read> ZLinkInfo for EmbeddedIOLinkRx<'_, Rx> {
 }
 
 impl<Tx: embedded_io_async::Write, Rx: embedded_io_async::Read> ZLinkTx for EmbeddedIOLink<Tx, Rx> {
+    async fn flush(&mut self) -> Result<(), LinkError> {
+        self.tx.flush().await.map_err(|_| LinkError::LinkTxFailed)
+    }
+
     async fn write_all(
         &mut self,
         buffer: &[u8],
@@ -130,6 +141,10 @@ impl<Tx: embedded_io_async::Write, Rx: embedded_io_async::Read> ZLinkTx for Embe
 }
 
 impl<Tx: embedded_io_async::Write> ZLinkTx for EmbeddedIOLinkTx<'_, Tx> {
+    async fn flush(&mut self) -> Result<(), LinkError> {
+        self.tx.flush().await.map_err(|_| LinkError::LinkTxFailed)
+    }
+
     async fn write_all(
         &mut self,
         buffer: &[u8],

@@ -244,6 +244,17 @@ macro_rules! __session {
     }};
 }
 
+impl<'transport, 'resources: 'transport, Config: ZSessionConfig>
+    Session<'transport, 'resources, Config>
+{
+    /// Drain adapter-owned TX buffers before closing a finite application.
+    /// The session driver should keep being polled while this completes.
+    pub async fn flush(&self) -> Result<(), zenoh_proto::SessionError> {
+        use crate::io::transport::ZTransportLinkTx;
+        self.driver.tx().await.flush().await.map_err(Into::into)
+    }
+}
+
 #[cfg(test)]
 mod scoped_lifetime_tests {
     extern crate std;
