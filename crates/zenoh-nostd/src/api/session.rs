@@ -244,6 +244,56 @@ impl<'res, Config: ZSessionConfig> Session<'res, Config> {
         use crate::io::transport::ZTransportLinkTx;
         self.driver.tx().await.flush().await.map_err(Into::into)
     }
+
+    /// Remove all application declarations and pending gets. Call only after
+    /// stopping their owners; dropping a future alone does not undeclare it.
+    pub async fn clear_declarations(&self) -> Result<(), zenoh_proto::SessionError> {
+        use crate::io::transport::ZTransportLinkTx;
+        use zenoh_proto::{fields::*, msgs::*};
+        if self.driver.tx().await.is_interrupted() {
+            return Err(zenoh_proto::TransportLinkError::TransportClosed.into());
+        }
+        let mut state = self.state().await;
+        state.get_callbacks.clear();
+        while let Some(id) = state.sub_callbacks.first_id() {
+            state.sub_callbacks.remove(id)?;
+            self.driver
+                .tx()
+                .await
+                .send(core::iter::once(NetworkMessage {
+                    reliability: Reliability::default(),
+                    qos: zenoh_proto::exts::QoS::default(),
+                    body: NetworkBody::Declare(Declare {
+                        body: DeclareBody::UndeclareSubscriber(UndeclareSubscriber {
+                            id,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                }))
+                .await?;
+        }
+        while let Some(id) = state.queryable_callbacks.first_id() {
+            state.queryable_callbacks.remove(id)?;
+            self.driver
+                .tx()
+                .await
+                .send(core::iter::once(NetworkMessage {
+                    reliability: Reliability::default(),
+                    qos: zenoh_proto::exts::QoS::default(),
+                    body: NetworkBody::Declare(Declare {
+                        body: DeclareBody::UndeclareQueryable(UndeclareQueryable {
+                            id,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                }))
+                .await?;
+        }
+        state.queryable_callbacks.clear();
+        Ok(())
+    }
 }
 
 /// Reusable, pinned storage for a session backed by a static configuration.

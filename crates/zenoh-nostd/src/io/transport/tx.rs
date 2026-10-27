@@ -21,6 +21,10 @@ impl<'transport, LinkTx, Buff> TransportLinkTx<'transport, LinkTx, Buff> {
         }
     }
 
+    pub fn is_interrupted(&self) -> bool {
+        *self.interrupted
+    }
+
     pub fn transport(&self) -> &TransportTx<Buff> {
         self.transport
     }
