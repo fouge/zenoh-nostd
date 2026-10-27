@@ -237,6 +237,15 @@ macro_rules! __session {
     }};
 }
 
+impl<'res, Config: ZSessionConfig> Session<'res, Config> {
+    /// Drain adapter-owned TX buffers before closing a finite application.
+    /// The session driver should keep being polled while this completes.
+    pub async fn flush(&self) -> Result<(), zenoh_proto::SessionError> {
+        use crate::io::transport::ZTransportLinkTx;
+        self.driver.tx().await.flush().await.map_err(Into::into)
+    }
+}
+
 /// Reusable, pinned storage for a session backed by a static configuration.
 /// A guard bounds access to each session; dropping it releases the driver before
 /// its transport, including on cancellation. No allocation is required.

@@ -22,11 +22,16 @@ pub use tx::*;
 pub struct TransportLink<Link, Buff> {
     link: Link,
     transport: Transport<Buff>,
+    tx_interrupted: bool,
 }
 
 impl<Link, Buff> TransportLink<Link, Buff> {
     pub fn new(link: Link, transport: Transport<Buff>) -> Self {
-        Self { link, transport }
+        Self {
+            link,
+            transport,
+            tx_interrupted: false,
+        }
     }
 
     pub fn split(
@@ -42,7 +47,7 @@ impl<Link, Buff> TransportLink<Link, Buff> {
         let (transport_tx, transport_rx) = self.transport.split();
 
         (
-            TransportLinkTx::new(link_tx, transport_tx),
+            TransportLinkTx::new(link_tx, transport_tx, &mut self.tx_interrupted),
             TransportLinkRx::new(link_rx, transport_rx),
         )
     }
@@ -61,8 +66,12 @@ where
     Link: ZLinkTx,
     Buff: AsMut<[u8]> + AsRef<[u8]>,
 {
-    fn tx(&mut self) -> (&mut impl ZLinkTx, &mut impl ZTransportTx) {
-        (&mut self.link, &mut self.transport.tx)
+    fn tx(&mut self) -> (&mut impl ZLinkTx, &mut impl ZTransportTx, &mut bool) {
+        (
+            &mut self.link,
+            &mut self.transport.tx,
+            &mut self.tx_interrupted,
+        )
     }
 }
 
