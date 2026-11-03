@@ -13,6 +13,7 @@ resolver = "3"
 [features]
 default = []
 alloc = ["zenoh-nostd/alloc", "zenoh-examples-embassy/alloc", "zenoh-examples-common/alloc"]
+scoped-session-test = []
 
 [dependencies]
 zenoh-examples-embassy = { path = "../..", default-features = false }

@@ -15,6 +15,8 @@ check-examples:
     cd examples/embassy/esp/esp32s3-wifi && WIFI_PASSWORD=ci-placeholder ENDPOINT=tcp/192.0.2.1:7447 cargo +esp check --locked --bins --features=alloc
     cd examples/embassy/esp/esp32c6-pico-wifi && WIFI_PASSWORD=ci-placeholder ENDPOINT=tcp/192.0.2.1:7447 cargo clippy --locked --bins
     cd examples/embassy/esp/esp32c6-pico-wifi && WIFI_PASSWORD=ci-placeholder ENDPOINT=tcp/192.0.2.1:7447 cargo clippy --locked --bins --features=alloc
+    cd examples/embassy/esp/esp32c6-pico-wifi && WIFI_PASSWORD=ci-placeholder ENDPOINT=tcp/192.0.2.1:7447 cargo clippy --locked --bins --no-default-features --features=scoped-session-test
+    cd examples/embassy/esp/esp32c6-pico-wifi && WIFI_PASSWORD=ci-placeholder ENDPOINT=tcp/192.0.2.1:7447 cargo clippy --locked --bins --no-default-features --features=scoped-session-test,alloc
     cd examples/embassy/stm32/nucleo-h753zi-ethernet && ENDPOINT=tcp/192.0.2.1:7447 cargo clippy --locked --bins
     cd examples/embassy/stm32/nucleo-h753zi-ethernet && ENDPOINT=tcp/192.0.2.1:7447 cargo clippy --locked --bins --features=alloc
     just check-headless
@@ -68,6 +70,15 @@ esp32c6 features="":
 [working-directory: repository_root]
 build-esp32c6 features="":
     cd examples/embassy/esp/esp32c6-pico-wifi && cargo build --locked --release --bin zenoh-app --features="{{ features }}"
+
+# Scoped-session regression: local configuration and callbacks, no CLI.
+[working-directory: repository_root]
+build-esp32c6-scoped-session features="":
+    just build-firmware esp32c6-pico-wifi "scoped-session-test{{ if features == "" { "" } else { "," + features } }}" headless
+
+[working-directory: repository_root]
+esp32c6-scoped-session features="":
+    cd examples/embassy/esp/esp32c6-pico-wifi && cargo run --locked --release --no-default-features --bin zenoh-app --features="scoped-session-test{{ if features == "" { "" } else { "," + features } }}"
 
 [working-directory: repository_root]
 stm32 features="":

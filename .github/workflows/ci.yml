@@ -197,6 +197,9 @@ jobs:
           else
             env -u RUSTFLAGS nix develop -c just build-firmware "${{ matrix.board }}" "${{ matrix.features }}" "${{ matrix.mode }}"
           fi
+      - name: Link scoped-session hardware test (no flashing)
+        if: matrix.board == 'esp32c6-pico-wifi'
+        run: env -u RUSTFLAGS nix develop -c just build-esp32c6-scoped-session "${{ matrix.features }}"
 
   # NOTE: In GitHub repository settings, the "Require status checks to pass
   # before merging" branch protection rule ensures that commits are only merged
